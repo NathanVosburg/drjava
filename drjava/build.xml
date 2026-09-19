@@ -57,7 +57,7 @@
   
   <!-- For code coverage report -->
   <taskdef uri="antlib:org.jacoco.ant" resource="org/jacoco/ant/antlib.xml">
-      <classpath path="lib/jacocoant.jar"/>
+      <classpath path="lib/buildlib/jacocoant.jar"/>
   </taskdef>
   <property name="coverage-report-dir" value="coverage_report"/>
   <property name="coverage-exec" value="jacoco.exec"/>
@@ -187,7 +187,7 @@
        Compilation Targets
        ******************* -->
        
-  <!-- The following target assumes that javac resolves to a Java 8 compiler -->
+  <!-- The main build requires a JDK supporting release 10. -->
   <target name="compile" depends="generate-source, do-compile-7-to-10, copy-resources, unjar-libs"
           description="Compile all source files (after generating the source)">
   </target>
@@ -1171,6 +1171,12 @@
     <available property="java8-exec" value="${java8-exec-2}" file="${java8-exec-2}" />
 
     <fail message="Can't find the java executable in the Java 8 home: ${java8-home}" unless="java8-exec" />
+  </target>
+
+  <target name="resolve-java8-tools">
+    <property name="java8-tools" location="${java8-home}/lib/tools.jar" />
+    <available property="java8-tools-exists" file="${java8-tools}" />
+    <fail unless="java8-tools-exists" message="This legacy target requires JAVA8_HOME pointing to a JDK 8 installation." />
   </target>
 
   <target name="resolve-java-tools">

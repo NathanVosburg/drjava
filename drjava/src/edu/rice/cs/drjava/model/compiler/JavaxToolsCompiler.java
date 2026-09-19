@@ -97,17 +97,19 @@ public class JavaxToolsCompiler implements CompilerInterface {
         // Process diagnostics to create DJError list
         List<DJError> errors = new ArrayList<>();
         for (Diagnostic<? extends JavaFileObject> diagnostic : diagnostics.getDiagnostics()) {
-            DJError error = new DJError(new File(diagnostic.getSource().toUri()),
+            DJError error = diagnostic.getSource() == null
+                ? new DJError(diagnostic.getMessage(null), diagnostic.getKind() != Diagnostic.Kind.ERROR)
+                : new DJError(new File(diagnostic.getSource().toUri()),
                     (int) diagnostic.getLineNumber() - 1, // DJError adds 1 to this number.
                     (int) diagnostic.getColumnNumber() - 1, // Fixes the cursor position offset.
                     diagnostic.getMessage(null),
-                    diagnostic.getKind() == Diagnostic.Kind.ERROR);
+                    diagnostic.getKind() != Diagnostic.Kind.ERROR);
             errors.add(error);
         }
 
         // If compilation failed and no errors were reported, add a generic error message
         if (!success && errors.isEmpty()) {
-            errors.add(new DJError("Compilation failed with unknown error", true));
+            errors.add(new DJError("Compilation failed with unknown error", false));
         }
 
         return errors;
@@ -143,16 +145,11 @@ public class JavaxToolsCompiler implements CompilerInterface {
     }
 
     public static String transformJavaCommand(String s) {
-        // check the return type and public access before executing, per bug #1585210
-        String command =
-                "try '{'\n" +
-                        "  java.lang.reflect.Method m = {0}.class.getMethod(\"main\", java.lang.String[].class);\n" +
-                        "  if (!m.getReturnType().equals(void.class)) throw new java.lang.NoSuchMethodException();\n" +
-                        "'}'\n" +
-                        "catch (java.lang.NoSuchMethodException e) '{'\n" +
-                        "  throw new java.lang.NoSuchMethodError(\"main\");\n" +
-                        "'}'\n" +
-                        "{0}.main(new String[]'{'{1}'}');";
+        // Reflection also supports default-package assignment classes in JShell.
+        String command = "'{' java.lang.reflect.Method m = Class.forName(\"{0}\").getMethod(\"main\", String[].class); " +
+            "if (!m.getReturnType().equals(void.class) || !java.lang.reflect.Modifier.isStatic(m.getModifiers())) " +
+            "throw new NoSuchMethodError(\"main\"); " +
+            "m.invoke(null, (Object) new String[]'{'{1}'}'); '}'";
         return _transformCommand(s, command);
     }
 
@@ -185,9 +182,9 @@ public class JavaxToolsCompiler implements CompilerInterface {
         if (!isProgram) {
             try {
                 // if this doesn't throw, c is a subclass of Applet
-                c.asSubclass(java.applet.Applet.class);
+                c.asSubclass(Class.forName("java.applet.Applet"));
                 isApplet = true;
-            } catch(ClassCastException cce) { }
+            } catch(ClassCastException | ClassNotFoundException cce) { }
         }
 
         java.lang.reflect.Method m = null;
@@ -324,8 +321,9 @@ public class JavaxToolsCompiler implements CompilerInterface {
         final String className =
                 classNameWithQuotes.substring(1, classNameWithQuotes.length() - 1); // removes quotes, becomes MyClass
 
-        // we pass MyClass.class just to get a "Static Error: Undefined class 'MyClass'"
-        String ret = JavacCompiler.class.getName()+".runCommand(\""+s.toString()+"\", "+className+".class)";
+        // JShell cannot directly reference classes in the default package.
+        String escapedCommand = s.replace("\\", "\\\\").replace("\"", "\\\"");
+        String ret = JavaxToolsCompiler.class.getName()+".runCommand(\""+escapedCommand+"\", Class.forName(\""+className+"\"))";
         // System.out.println(ret);
         return ret;
     }

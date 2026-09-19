@@ -689,10 +689,7 @@ public class MainJVM extends AbstractMasterJVM implements MainJVMRemoteI {
     if (_allowAssertions) { jvmArgs.add("-ea"); }
     int debugPort = _getDebugPort();
     if (debugPort > -1) {
-      jvmArgs.add("-Xrunjdwp:transport=dt_socket,server=y,suspend=n,address=" + debugPort);
-      jvmArgs.add("-Xdebug");
-      jvmArgs.add("-Xnoagent");
-      jvmArgs.add("-Djava.compiler=NONE");
+      jvmArgs.add("-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=" + debugPort);
     }
     String slaveMemory = DrJava.getConfig().getSetting(OptionConstants.SLAVE_JVM_XMX);
     if (!"".equals(slaveMemory) && !OptionConstants.heapSizeChoices.get(0).equals(slaveMemory)) {

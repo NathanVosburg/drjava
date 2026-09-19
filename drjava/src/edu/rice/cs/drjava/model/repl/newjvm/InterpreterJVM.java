@@ -109,7 +109,9 @@ public class InterpreterJVM extends AbstractSlaveJVM implements InterpreterJVMRe
   private final Interpreter _defaultInterpreter;
   private final Map<String, Interpreter> _interpreters;
   private final Set<Interpreter> _busyInterpreters;
-  private final JShell _js;
+  // Accessed under this monitor; shutdown notifications arrive on a JShell thread.
+  private JShell _js;
+  private volatile JShell _closedShell;
   // The following variable appears to be useless.
 //  private final Map<String, Pair<TypeContext, RuntimeBindings>> _environments;
   
@@ -154,6 +156,11 @@ public class InterpreterJVM extends AbstractSlaveJVM implements InterpreterJVMRe
     output_buf = new StringBuilder();
     input_buf = new StringBuilder();
     num_input_braces = 0;
+    _js = createJShell();
+  }
+
+  /** Build a replacement interpreter with all paths retained while the previous one was closed. */
+  private JShell createJShell() {
     // Create a PrintStream that will write to our StringBuilder
     PrintStream printStream = new PrintStream(new OutputStream() {
       @Override
@@ -163,11 +170,13 @@ public class InterpreterJVM extends AbstractSlaveJVM implements InterpreterJVMRe
     });
 
     try {
-      _js = JShell.builder()
+      JShell shell = JShell.builder()
               .out(printStream)
               .err(printStream)
-              .compilerOptions("-classpath", getClassPathString())
               .build();
+      shell.onShutdown(closed -> _closedShell = closed);
+      shell.addToClasspath(getClassPathString());
+      return shell;
     } catch(IllegalStateException e) {
       //Potentially exit system or try to create a new JShell instance
       System.err.println("JShell is not available in this environment");
@@ -288,8 +297,13 @@ public class InterpreterJVM extends AbstractSlaveJVM implements InterpreterJVMRe
    * @return InterpretResult - the result of the interpretation
    * @throws InterpreterException - in the case the JShell instance is not available or an error occurs during interpretation
    */
-  private InterpretResult interpretWithJShell(StringBuilder input_buf) throws InterpreterException {
+  private synchronized InterpretResult interpretWithJShell(StringBuilder input_buf) throws InterpreterException {
     InterpretResult res = null;
+    if (_closedShell == _js) {
+      _js.close();
+      output_buf.setLength(0);
+      _js = createJShell();
+    }
     //TD set verbosity level so it doesn't freak out over things like semicolons
     if (_js == null) {
       //TODO create InterpretResultException here
@@ -298,10 +312,6 @@ public class InterpreterJVM extends AbstractSlaveJVM implements InterpreterJVMRe
 
 //    System.out.println("Evalulating: " + input_buf.toString());
     List<SnippetEvent> events = _js.eval(input_buf.toString());
-    //getting rid of new line character at the end
-    if (output_buf.length() > 0 && output_buf.charAt(output_buf.length() - 1) == '\n') {
-      output_buf.setLength(output_buf.length() - 1);
-    }
 
     boolean hasError = false;
 
@@ -312,14 +322,19 @@ public class InterpreterJVM extends AbstractSlaveJVM implements InterpreterJVMRe
         output_buf.append(diagnostics.getMessage(Locale.getDefault()));
         res = InterpretResult.exception(new EvaluatorException(new Throwable(output_buf.toString())));
         hasError = true;
-      }  else if (e.value() != null) {
+      } else if (e.exception() != null) {
+        res = InterpretResult.exception(new EvaluatorException(e.exception()));
+        hasError = true;
+      } else if (e.value() != null) {
         output_buf.append(e.value()).append("\n");
       }
     }
 
     if (!hasError && output_buf.length() > 0) {
-      // Remove the last newline character added
-      output_buf.setLength(output_buf.length() - 1);
+      // Trim only a trailing newline, never the last character of program output.
+      if (output_buf.charAt(output_buf.length() - 1) == '\n') {
+        output_buf.setLength(output_buf.length() - 1);
+      }
       res = InterpretResult.objectValue(output_buf.toString(), "JShellOutput");
     }
 
@@ -706,11 +721,22 @@ public class InterpreterJVM extends AbstractSlaveJVM implements InterpreterJVMRe
   public void junitJVMReady() { }
   
   // --------- Class path methods ----------
-  public void addExtraClassPath(File f) { _classPathManager.addExtraCP(f); }
-  public void addProjectClassPath(File f) { _classPathManager.addProjectCP(f); }
-  public void addBuildDirectoryClassPath(File f) { _classPathManager.addBuildDirectoryCP(f); }
-  public void addProjectFilesClassPath(File f) { _classPathManager.addProjectFilesCP(f); }
-  public void addExternalFilesClassPath(File f) { _classPathManager.addExternalFilesCP(f); }
+  public synchronized void addExtraClassPath(File f) { _classPathManager.addExtraCP(f); addToJShellClassPath(f); }
+  public synchronized void addProjectClassPath(File f) { _classPathManager.addProjectCP(f); addToJShellClassPath(f); }
+  public synchronized void addBuildDirectoryClassPath(File f) { _classPathManager.addBuildDirectoryCP(f); addToJShellClassPath(f); }
+  public synchronized void addProjectFilesClassPath(File f) { _classPathManager.addProjectFilesCP(f); addToJShellClassPath(f); }
+  public synchronized void addExternalFilesClassPath(File f) { _classPathManager.addExternalFilesCP(f); addToJShellClassPath(f); }
+
+  /** Saving must still work after a program exits its JShell execution process. */
+  private void addToJShellClassPath(File f) {
+    if (_closedShell == _js) return;
+    try { _js.addToClasspath(f.getAbsolutePath()); }
+    catch (IllegalStateException closed) {
+      // Shutdown can race with the update. The manager already retained this path;
+      // createJShell restores it before the next interaction.
+      _closedShell = _js;
+    }
+  }
 
   public Iterable<File> getClassPath() {
     // need to make a serializable snapshot
@@ -721,6 +747,6 @@ public class InterpreterJVM extends AbstractSlaveJVM implements InterpreterJVMRe
     Iterable<File> classPathFiles = _classPathManager.getClassPath();
     return StreamSupport.stream(Spliterators.spliteratorUnknownSize(classPathFiles.iterator(), 0), false) // Convert Iterable<File> to Stream<File>
             .map(File::getAbsolutePath)
-            .collect(Collectors.joining(";"));
+            .collect(Collectors.joining(File.pathSeparator));
   }
 }
