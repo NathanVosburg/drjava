@@ -14,6 +14,36 @@ Other IDE features and platforms have not been comprehensively tested.
 This is an independent fork, not an official DrJava release. Original DrJava
 copyright notices and the [BSD-style license](drjava/LICENSE) are retained.
 
+# Download and run
+
+**[Download drjava.jar](https://github.com/NathanVosburg/drjava/releases/latest/download/drjava.jar)**
+
+1. Install a **full JDK 26** if you do not already have one. This fork needs the
+   compiler and JShell included in a JDK; Java 8 and a standalone JRE are not sufficient.
+2. Download the JAR above. No Git, Ant, or source-code build is needed.
+3. From the folder containing the downloaded file, run:
+
+   ```sh
+   java -jar drjava.jar
+   ```
+
+4. Open your `.java` file and click **Go**.
+
+Double-clicking the JAR may also work if your system associates JAR files with
+JDK 26. If it opens with an older Java version, use the terminal command with
+JDK 26's `java` executable instead. Check the selected runtime with `java -version`.
+
+For Macs using Homebrew Java, the command is:
+
+```sh
+"$(brew --prefix openjdk)/bin/java" -jar ~/Downloads/drjava.jar
+```
+
+Tested on Apple Silicon macOS 26.2 with OpenJDK 26.0.2.1. Other platforms are
+not yet verified. See [release notes](https://github.com/NathanVosburg/drjava/releases/latest)
+for the downloadable version. Releases belong to this fork and are separate
+from upstream DrJava's SourceForge releases.
+
 # Upstream background
 
 This code base is merely a continuation of the DrJava code base formerly hosted
@@ -55,7 +85,8 @@ java -jar drjava/drjava.jar
 ```
 
 The generated application is **`drjava/drjava.jar`**. The `drjava.jar` at the
-repository root is a prebuilt binary and does not include local changes.
+repository root is a copy of this fork's published release; it is not automatically
+updated by a local build.
 Re-run the Ant command after editing source, then restart the application.
 The build uses the dependency JARs already included in the repository.
 
