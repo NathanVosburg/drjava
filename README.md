@@ -1,4 +1,20 @@
-# OVERVIEW
+# DrJava — Go-button fork
+
+A personal, class-focused fork of [DrJava](https://github.com/DrJavaAtRice/drjava)
+by Nathan Vosburg. The toolbar combines Compile and Run into one **Go** button:
+compile, wait for the interpreter to reset, then run if compilation succeeds.
+
+This fork also fixes build configuration and Java/JShell compatibility issues
+encountered while testing on Apple Silicon macOS with Homebrew OpenJDK 26.0.2.1.
+It handles programs that exit their execution process so subsequent saves and
+compilations still work. The focused integration tests cover successful runs,
+edited-code reruns, compiler errors, and recovery after a program exits.
+Other IDE features and platforms have not been comprehensively tested.
+
+This is an independent fork, not an official DrJava release. Original DrJava
+copyright notices and the [BSD-style license](drjava/LICENSE) are retained.
+
+# Upstream background
 
 This code base is merely a continuation of the DrJava code base formerly hosted
 at Sourceforge.  We decided to shift from Subversion to Git for two reasons:
@@ -21,3 +37,37 @@ We will continue to distribute new releases of DrJava via Sourceforge to
 preserve our distribution interface.  The move from Subversion on Sourceforge
 to Git on Github only concerns DrJava developers and others interested in the
 DrJava code base.
+
+# Local development
+
+This checkout targets Java 10 bytecode and bundles a Mac integration library
+that requires Java 9 or later. The old Java 8 instructions in `drjava/README`
+do not apply to this checkout. Apache Ant 1.10+ and a full JDK are required.
+
+On Apple Silicon macOS with Homebrew, from the repository root:
+
+```sh
+brew install ant
+export JAVA_HOME="$(brew --prefix openjdk)"
+export PATH="$JAVA_HOME/bin:$PATH"
+ant -f drjava/build.xml jar
+java -jar drjava/drjava.jar
+```
+
+The generated application is **`drjava/drjava.jar`**. The `drjava.jar` at the
+repository root is a prebuilt binary and does not include local changes.
+Re-run the Ant command after editing source, then restart the application.
+The build uses the dependency JARs already included in the repository.
+
+The toolbar's **Go** button compiles all open documents (or the active
+project), then runs the current document or the project's configured main
+class. Compilation errors and cancelled saves prevent execution. Separate
+Compile and Run commands remain available in the menus.
+
+Focused Go integration tests (opens Swing windows and launches local Java
+interpreter processes):
+
+```sh
+java -cp "$PWD/drjava/classes/test:$PWD/drjava/classes/base:$PWD/drjava/classes/lib:$PWD/drjava/lib/buildlib/junit.jar" \
+  junit.textui.TestRunner edu.rice.cs.drjava.ui.GoButtonTest
+```

@@ -209,7 +209,6 @@ public class MainFrame extends SwingFrame implements ClipboardOwner, DropTargetL
   JSplitPane _mainSplit;
   
   // private Container _docCollectionWidget;
-  private volatile JButton _compileButton;
   private volatile JButton _closeButton;
   private volatile JButton _undoButton;
   private volatile JButton _redoButton;
@@ -997,6 +996,14 @@ public class MainFrame extends SwingFrame implements ClipboardOwner, DropTargetL
     public void actionPerformed(ActionEvent ae) { _runMain(); }
   };
   
+  /** Compiles before running the current document or the project's configured main class. */
+  private final Action _goAction = new AbstractAction("Go") {
+    { _addGUIAvailabilityListener(this,
+                                 GUIAvailabilityListener.ComponentType.COMPILER,
+                                 GUIAvailabilityListener.ComponentType.INTERACTIONS); }
+    public void actionPerformed(ActionEvent ae) { _go(); }
+  };
+
   /** Tries to run the current document as an applet. */
   private volatile AbstractAction _runAppletAction = new AbstractAction("Run Document as Applet") {
     { _addGUIAvailabilityListener(this,                                             // init
@@ -4465,9 +4472,11 @@ public class MainFrame extends SwingFrame implements ClipboardOwner, DropTargetL
   JButton getCloseButton() { return _closeButton; }
   
   /** For testing purposes.
-    * @return The frame's compileAll button (Package private accessor)
+    * @return The compile-all action (Package private accessor)
     */
-  JButton getCompileAllButton() { return _compileButton; }
+  Action getCompileAllAction() { return _compileAllAction; }
+
+  JButton getGoButton() { return _runButton; }
   
   private volatile int _hourglassNestLevel = 0;
   
@@ -4912,7 +4921,6 @@ public class MainFrame extends SwingFrame implements ClipboardOwner, DropTargetL
   }
   
   private void _setUpProjectButtons(File projectFile) {
-    _compileButton = _updateToolBarButton(_compileButton, _compileProjectAction);
     _junitButton = _updateToolBarButton(_junitButton, _junitProjectAction);
     _recentProjectManager.updateOpenFiles(projectFile);
   }
@@ -5854,6 +5862,58 @@ public class MainFrame extends SwingFrame implements ClipboardOwner, DropTargetL
     t.start();
   }
   
+  /** A one-shot compilation listener prevents running stale code after errors or cancelled saves. */
+  private void _go() {
+    final boolean project = _model.isProjectActive();
+    final OpenDefinitionsDocument doc;
+    final String mainClass;
+    try {
+      if (isProjectActiveAndMainClassSet()) {
+        doc = _model.getDocumentForFile(_model.getMainClassContainingFile());
+        mainClass = _model.getMainClass();
+      }
+      else {
+        doc = _model.getActiveDocument();
+        mainClass = null;
+      }
+    }
+    catch (IOException e) { MainFrameStatics.showIOError(MainFrame.this, e); return; }
+    final GlobalModelListener afterCompile = new DummyGlobalModelListener() {
+      private boolean compiled;
+      public void compileEnded(File workDir, List<? extends File> excludedFiles) {
+        compiled = _model.getCompilerModel().getCompilerErrorModel().getNumCompilerErrors() == 0;
+        if (!compiled) _model.removeListener(this);
+        // A successful compilation resets Interactions. Wait for that reset before running.
+      }
+      public void interpreterReady(File workDir) {
+        if (compiled) {
+          _model.removeListener(this);
+          EventQueue.invokeLater(new Runnable() {
+            public void run() { _runMain(doc, mainClass); }
+          });
+        }
+      }
+      public void interpreterResetFailed(Throwable t) { _model.removeListener(this); }
+      public void compileAborted(Exception e) { _model.removeListener(this); }
+    };
+    _model.addListener(afterCompile);
+    _cleanUpDebugger();
+    hourglassOn();
+    try {
+      if (project) _model.getCompilerModel().compileProject();
+      else _model.getCompilerModel().compileAll();
+    }
+    catch (IOException e) {
+      _model.removeListener(afterCompile);
+      MainFrameStatics.showIOError(MainFrame.this, e);
+    }
+    catch (RuntimeException e) {
+      _model.removeListener(afterCompile);
+      throw e;
+    }
+    finally { hourglassOff(); }
+  }
+
   private void _runProject() {
     if (_model.isProjectActive()) {
       try {
@@ -5886,16 +5946,18 @@ public class MainFrame extends SwingFrame implements ClipboardOwner, DropTargetL
   }
   
   /** Internal helper method to run the main method of the current document in the interactions pane. */
-  private void _runMain() {
+  private void _runMain() { _runMain(_model.getActiveDocument(), null); }
+
+  private void _runMain(OpenDefinitionsDocument doc, String mainClass) {
     try {
       boolean smart = DrJava.getConfig().getSetting(OptionConstants.SMART_RUN_FOR_APPLETS_AND_PROGRAMS);
       if (smart) {
         updateStatusField("Running main Method of Current Document");
-        _model.getActiveDocument().runSmart(null);
+        doc.runSmart(mainClass);
       }
       else {
         updateStatusField("Running Current Document");
-        _model.getActiveDocument().runMain(null);
+        doc.runMain(mainClass);
       }
     }
     
@@ -6542,6 +6604,7 @@ public class MainFrame extends SwingFrame implements ClipboardOwner, DropTargetL
       _setUpAction(_javadocCurrentAction, "Preview Javadoc Current",
                    "Note: DrJava cannot run Javadoc because no JDK was found.  Please install a JDK.");
     }
+    _setUpAction(_goAction, "Go", "Run", "Compile, then run the current document or project main class");
     _setUpAction(_runAction, "Run", "Run the main method of the current document");
     _setUpAction(_runAppletAction, "Run", "Run the current document as applet");
     
@@ -7460,15 +7523,14 @@ public class MainFrame extends SwingFrame implements ClipboardOwner, DropTargetL
     _toolBar.addSeparator();
     _toolBar.add(_createToolBarButton(_findReplaceAction));
     
-    // Compile, reset, abort
+    // Reset interactions
     _toolBar.addSeparator();
-    _toolBar.add(_compileButton = _createToolBarButton(_compileAllAction));
     _toolBar.add(_createToolBarButton(_resetInteractionsAction));
     
-    // Run, Junit, and JavaDoc
+    // Go, JUnit, and Javadoc
     _toolBar.addSeparator();
     
-    _toolBar.add(_runButton = _createToolBarButton(_runAction));
+    _toolBar.add(_runButton = _createToolBarButton(_goAction));
     _toolBar.add(_junitButton = _createToolBarButton(_junitAllAction));
     _toolBar.add(_createToolBarButton(_javadocAllAction));
     _toolBar.add(_coverageButton = _createToolBarButton(_coverageAction));    
@@ -7498,7 +7560,7 @@ public class MainFrame extends SwingFrame implements ClipboardOwner, DropTargetL
           _runAction.putValue(Action.LONG_DESCRIPTION,
                               "Run the main method of the current document"); 
         }
-        // _runButton = _updateToolBarButton(_runButton, _runAction);
+        // _runButton = _updateToolBarButton(_runButton, _goAction);
         projectRunnableChanged();
       }
     };
@@ -10018,8 +10080,7 @@ public class MainFrame extends SwingFrame implements ClipboardOwner, DropTargetL
       _model.getDocumentNavigator().asContainer().addMouseListener(_resetFindReplaceListener);
 //      new ScrollableDialog(null, "Closing JUnit Error Panel in MainFrame", "", "").show();
       removeTab(_junitPanel);
-      _runButton = _updateToolBarButton(_runButton, _runAction);
-      _compileButton = _updateToolBarButton(_compileButton, _compileAllAction);
+      _runButton = _updateToolBarButton(_runButton, _goAction);
       _junitButton = _updateToolBarButton(_junitButton, _junitAllAction);
       projectRunnableChanged();
     }
@@ -10078,12 +10139,7 @@ public class MainFrame extends SwingFrame implements ClipboardOwner, DropTargetL
     boolean mainClassSet = isProjectActiveAndMainClassSet();
     _guiAvailabilityNotifier.ensureAvailabilityIs(GUIAvailabilityListener.ComponentType.PROJECT_MAIN_CLASS,
                                                   mainClassSet);
-    if (mainClassSet) {
-      _runButton = _updateToolBarButton(_runButton, _runProjectAction);
-    }
-    else {
-      _runButton = _updateToolBarButton(_runButton, _runAction);
-    }
+    _runButton = _updateToolBarButton(_runButton, _goAction);
   }
   
   public JViewport getDefViewport() {

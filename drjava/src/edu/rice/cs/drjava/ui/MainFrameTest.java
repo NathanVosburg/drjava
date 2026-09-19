@@ -636,7 +636,7 @@ public final class MainFrameTest extends MultiThreadedTestCase {
         _log.log("saving all files");
         _frame._saveAll();
         _log.log("invoking compileAll action");
-        _frame.getCompileAllButton().doClick();
+        _frame.getCompileAllAction().actionPerformed(null);
       }
     });
     Utilities.clearEventQueue();
